@@ -2300,6 +2300,7 @@ int msm_dp_ctrl_on_link(struct msm_dp_ctrl *msm_dp_ctrl)
 	if (rc)
 		return rc;
 
+retry_training:
 	while (--link_train_max_retries) {
 		training_step = DP_TRAINING_NONE;
 		rc = msm_dp_ctrl_setup_main_link(ctrl, &training_step);
@@ -2332,24 +2333,30 @@ int msm_dp_ctrl_on_link(struct msm_dp_ctrl *msm_dp_ctrl)
 				}
 			}
 		} else if (training_step == DP_TRAINING_2) {
-			/* link train_2 failed */
-			if (!msm_dp_aux_is_link_connected(ctrl->aux))
-				break;
+			/* link train_2 failed, try lower link rate */
 
-			drm_dp_dpcd_read_link_status(ctrl->aux, link_status);
-
-			if (!drm_dp_clock_recovery_ok(link_status,
-					ctrl->link->link_params.num_lanes))
-				rc = msm_dp_ctrl_link_rate_down_shift(ctrl);
-			else
-				rc = msm_dp_ctrl_link_lane_down_shift(ctrl);
-
+			/*
+			 * Do not check HPD here. LTTPRs (e.g. Parade
+			 * PS8830) may toggle HPD after a training failure,
+			 * which would abort the retry loop before rate
+			 * fallback can be attempted. The loop is bounded by
+			 * link_train_max_retries, and a truly disconnected
+			 * link will fail quickly on the next AUX access.
+			 *
+			 * Always try reducing the link rate first -- if EQ
+			 * failed on an LTTPR the sink has not been trained
+			 * yet, so its DPRX link status is meaningless.
+			 */
+			rc = msm_dp_ctrl_link_rate_down_shift(ctrl);
 			if (rc < 0) {
-				/* end with failure */
-				break; /* lane == 1 already */
+				rc = msm_dp_ctrl_link_lane_down_shift(ctrl);
+				if (rc < 0) {
+					/* end with failure */
+					break;
+				}
 			}
 
-			/* stop link training before start re training  */
+			/* stop link training before re-training */
 			msm_dp_ctrl_clear_training_pattern(ctrl, DP_PHY_DPRX);
 		}
 
@@ -2363,6 +2370,45 @@ int msm_dp_ctrl_on_link(struct msm_dp_ctrl *msm_dp_ctrl)
 	if (ctrl->link->sink_request & DP_TEST_LINK_PHY_TEST_PATTERN)
 		return rc;
 
+	/*
+	 * If non-transparent LTTPR training failed at all link rates,
+	 * fall back to transparent mode.  Some LTTPRs (e.g. Parade
+	 * PS8830) fail per-segment EQ training because they return
+	 * zero adjust requests at every link rate.  In transparent
+	 * mode the LTTPR adapts autonomously and we train only the
+	 * sink directly.  Intel's i915 driver also falls back to
+	 * transparent mode when non-transparent init fails.
+	 */
+	if (rc && ctrl->link->lttpr_count > 0) {
+		int transparent_rc;
+
+		drm_dbg_dp(ctrl->drm_dev,
+			   "LTTPR training failed, falling back to transparent mode\n");
+
+		transparent_rc = drm_dp_lttpr_set_transparent_mode(ctrl->aux,
+								   true);
+		if (transparent_rc) {
+			DRM_ERROR("Failed to set LTTPR transparent mode. rc=%d\n",
+				  transparent_rc);
+			goto train_done;
+		}
+		ctrl->link->lttpr_count = 0;
+
+		/* Reset link params to max and retry */
+		ctrl->link->link_params.rate = ctrl->panel->link_info.rate;
+		ctrl->link->link_params.num_lanes =
+			ctrl->panel->link_info.num_lanes;
+		link_train_max_retries = 5;
+
+		rc = msm_dp_ctrl_reinitialize_mainlink(ctrl);
+		if (rc) {
+			DRM_ERROR("Failed to reinitialize mainlink for transparent mode. rc=%d\n", rc);
+		} else {
+			goto retry_training;
+		}
+	}
+
+train_done:
 	if (rc == 0) {  /* link train successfully */
 		/*
 		 * do not stop train pattern here

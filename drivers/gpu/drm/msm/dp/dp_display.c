@@ -1751,6 +1751,10 @@ void msm_dp_bridge_hpd_enable(struct drm_bridge *bridge)
 	 * step-4: DP PHY is initialized at plugin handler before link training
 	 *
 	 */
+	DRM_DEV_INFO(&msm_dp_display->pdev->dev,
+		     "hpd_enable called, type=%d\n",
+		     msm_dp_display->connector_type);
+
 	mutex_lock(&dp->event_mutex);
 	if (pm_runtime_resume_and_get(&msm_dp_display->pdev->dev)) {
 		DRM_ERROR("failed to resume power\n");
@@ -1758,8 +1762,14 @@ void msm_dp_bridge_hpd_enable(struct drm_bridge *bridge)
 		return;
 	}
 
+	msm_dp_display_host_phy_init(dp);
 	msm_dp_aux_hpd_enable(dp->aux);
 	msm_dp_aux_hpd_intr_enable(dp->aux);
+
+	DRM_DEV_INFO(&msm_dp_display->pdev->dev,
+		     "hpd_enable done: type=%d phy_init=%d hpd_state=%d\n",
+		     msm_dp_display->connector_type,
+		     dp->phy_initialized, dp->hpd_state);
 
 	msm_dp_display->internal_hpd = true;
 	mutex_unlock(&dp->event_mutex);
