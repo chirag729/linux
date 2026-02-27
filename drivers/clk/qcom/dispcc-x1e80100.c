@@ -802,7 +802,11 @@ static struct clk_branch disp_cc_mdss_ahb_clk = {
 				&disp_cc_mdss_ahb_clk_src.clkr.hw,
 			},
 			.num_parents = 1,
-			.flags = CLK_SET_RATE_PARENT,
+			/*
+			 * CLK_IS_CRITICAL: Keep clock enabled to preserve UEFI
+			 * framebuffer state for efifb/simpledrm handoff.
+			 */
+			.flags = CLK_SET_RATE_PARENT | CLK_IS_CRITICAL,
 			.ops = &clk_branch2_ops,
 		},
 	},
@@ -1342,7 +1346,11 @@ static struct clk_branch disp_cc_mdss_mdp_clk = {
 				&disp_cc_mdss_mdp_clk_src.clkr.hw,
 			},
 			.num_parents = 1,
-			.flags = CLK_SET_RATE_PARENT,
+			/*
+			 * CLK_IS_CRITICAL: Keep MDP clock enabled to preserve
+			 * UEFI framebuffer state for efifb/simpledrm handoff.
+			 */
+			.flags = CLK_SET_RATE_PARENT | CLK_IS_CRITICAL,
 			.ops = &clk_branch2_ops,
 		},
 	},
@@ -1504,7 +1512,11 @@ static struct clk_branch disp_cc_mdss_vsync_clk = {
 				&disp_cc_mdss_vsync_clk_src.clkr.hw,
 			},
 			.num_parents = 1,
-			.flags = CLK_SET_RATE_PARENT,
+			/*
+			 * CLK_IS_CRITICAL: Keep vsync clock enabled for
+			 * UEFI framebuffer preservation.
+			 */
+			.flags = CLK_SET_RATE_PARENT | CLK_IS_CRITICAL,
 			.ops = &clk_branch2_ops,
 		},
 	},
@@ -1519,7 +1531,13 @@ static struct gdsc mdss_gdsc = {
 		.name = "mdss_gdsc",
 	},
 	.pwrsts = PWRSTS_OFF_ON,
-	.flags = HW_CTRL | RETAIN_FF_ENABLE,
+	/*
+	 * ALWAYS_ON added to preserve UEFI display state for efifb.
+	 * Without this, the power domain turns off when no driver claims
+	 * the MDSS hardware, killing the UEFI-initialized framebuffer.
+	 * TODO: Make this conditional on efifb being active.
+	 */
+	.flags = HW_CTRL | RETAIN_FF_ENABLE | ALWAYS_ON,
 };
 
 static struct gdsc mdss_int2_gdsc = {

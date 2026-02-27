@@ -448,6 +448,23 @@
 
 		regulator-boot-on;
 	};
+
+	/*
+	 * HDMI connector node disabled while DP1 is disabled.
+	 * Keeping it would cause aux_bridge probe issues.
+	 */
+	/*
+	hdmi-connector {
+		compatible = "hdmi-connector";
+		type = "a";
+
+		port {
+			hdmi_con_in: endpoint {
+				remote-endpoint = <&usb_1_ss1_qmpphy_out>;
+			};
+		};
+	};
+	*/
 };
 
 &apps_rsc {
@@ -968,38 +985,41 @@
 	qcom,dmic-sample-rate = <4800000>;
 };
 
+/*
+ * Disable MDSS to prevent DPU driver from probing and resetting hardware.
+ * The ALWAYS_ON flag in dispcc-x1e80100.c keeps mdss_gdsc power domain
+ * alive even without a driver claiming it, preserving UEFI display state.
+ */
 &mdss {
-	status = "okay";
+	status = "disabled";
 };
 
 &mdss_dp0 {
-	status = "okay";
+	status = "disabled";
 };
 
 &mdss_dp0_out {
 	link-frequencies = /bits/ 64 <1620000000 2700000000 5400000000 8100000000>;
 };
 
+/*
+ * DP1/HDMI disabled for now - using efifb instead.
+ * The DP-to-HDMI bridge chip (ITE, I2C 3:0x5b) loses state when
+ * the MSM DRM driver resets the PHY during probe, causing AUX timeout.
+ * With DP1 disabled, efifb preserves UEFI's display initialization.
+ * TODO: Write an ITE bridge driver to reinitialize the chip.
+ */
 &mdss_dp1 {
-	/delete-property/ #sound-dai-cells;
-
-	pinctrl-0 = <&edp1_hpd_default>;
-	pinctrl-names = "default";
-
-	status = "okay";
+	status = "disabled";
 };
 
 &mdss_dp1_out {
+	data-lanes = <0 1 2 3>;
 	link-frequencies = /bits/ 64 <1620000000 2700000000 5400000000 8100000000>;
 };
 
 &mdss_dp3 {
-	/delete-property/ #sound-dai-cells;
-
-	pinctrl-0 = <&edp0_hpd_default>;
-	pinctrl-names = "default";
-
-	status = "okay";
+	status = "disabled";
 };
 
 &mdss_dp3_out {
@@ -1266,6 +1286,18 @@
 			       <44 4>, /* SPI (TPM) */
 			       <238 1>; /* UFS Reset */
 
+	/*
+	 * GPIO 117 suspected to be DP-to-HDMI bridge chip enable.
+	 * Observed as output HIGH with 16mA drive but UNCLAIMED in Linux.
+	 * Assert early via gpio-hog to enable the bridge before DP probes.
+	 */
+	hdmi_bridge_en: hdmi-bridge-en-hog {
+		gpio-hog;
+		gpios = <117 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "hdmi-bridge-enable";
+	};
+
 	edp1_hpd_default: edp1-hpd-default-state {
 		pins = "gpio120";
 		function = "edp1_hot";
@@ -1505,14 +1537,23 @@
 	remote-endpoint = <&retimer_ss0_ss_in>;
 };
 
+/*
+ * Keep USB SS1 path enabled for USB functionality.
+ * The combo PHY (fda000) handles USB3 SS1.
+ * MDSS/DP1 is disabled separately to preserve efifb.
+ */
 &usb_1_ss1_qmpphy {
-	/delete-property/ mode-switch;
-	/delete-property/ orientation-switch;
-
 	vdda-phy-supply = <&vreg_l2j_1p2>;
 	vdda-pll-supply = <&vreg_l2d_0p9>;
-
 	status = "okay";
+};
+
+&usb_1_ss1 {
+	status = "okay";
+};
+
+&usb_1_ss1_dwc3 {
+	dr_mode = "host";
 };
 
 &usb_mp {

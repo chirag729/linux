@@ -1773,6 +1773,27 @@ void msm_dp_bridge_hpd_enable(struct drm_bridge *bridge)
 
 	msm_dp_display->internal_hpd = true;
 	mutex_unlock(&dp->event_mutex);
+
+	/*
+	 * HACK: Force plug event for DP1 (HDMI) to test display pipeline.
+	 * The DP-to-HDMI bridge chip at I2C 3:0x5b is not forwarding HPD
+	 * from the monitor to GPIO 120. This bypasses HPD detection to
+	 * verify the rest of the link training path works.
+	 * Match on device address since connector_type is always DP (10),
+	 * not HDMIA (11) - the HDMI conversion happens in the bridge chip.
+	 * NOTE: Must be AFTER mutex_unlock - event handler acquires the mutex.
+	 * TODO: Remove once bridge chip is properly identified and initialized.
+	 */
+	{
+		static bool hdmi_forced_once;
+		if (!hdmi_forced_once &&
+		    msm_dp_display->pdev->resource[0].start == 0x0ae98000) {
+			hdmi_forced_once = true;
+			DRM_DEV_INFO(&msm_dp_display->pdev->dev,
+				     "HACK: Forcing HPD plug event for DP1 (HDMI)\n");
+			msm_dp_add_event(dp, EV_HPD_PLUG_INT, 0, 0);
+		}
+	}
 }
 
 void msm_dp_bridge_hpd_disable(struct drm_bridge *bridge)
